@@ -80,6 +80,10 @@ class NacdStatistic:
         tau_short_s: float = 0.4,
         lag_frames: int = 20,
         coherence_gate: bool = False,
+        # Multiples of tau_long to wait before the reference is trusted.
+        # Bias correction makes the average unbiased from the first sample, so
+        # this only needs to cover the variance settling, not the mean.
+        settle_tau: float = 0.5,
     ) -> None:
         dt = 1.0 / fs
         self.alpha_long = 1.0 - math.exp(-dt / tau_long_s)
@@ -94,6 +98,11 @@ class NacdStatistic:
         self._s: np.ndarray | None = None
         self._dirs: deque[np.ndarray] = deque(maxlen=lag_frames + 1)
         self._frozen = False
+        self._updates = 0
+        # Calibration still waits a little: the running mean is unbiased
+        # immediately but noisy until it has averaged enough samples, and a
+        # baseline measured from a handful of frames is not a baseline.
+        self._settle_frames = int(settle_tau * tau_long_s * fs)
 
     @property
     def reference(self) -> np.ndarray | None:
@@ -103,6 +112,20 @@ class NacdStatistic:
     @property
     def warm(self) -> bool:
         return self._dirs.maxlen is not None and len(self._dirs) > self.lag_frames
+
+    @property
+    def settled(self) -> bool:
+        """Whether the long-term reference has converged.
+
+        Calibration must wait for this. Measuring the quiet baseline while the
+        reference is still converging records the transient as if it were the
+        room, and every later z-score comes out far below it.
+        """
+        return self._updates >= self._settle_frames
+
+    @property
+    def settle_progress(self) -> float:
+        return min(1.0, self._updates / max(self._settle_frames, 1))
 
     def freeze(self, frozen: bool = True) -> None:
         """Stop adapting the long-term reference.
@@ -118,17 +141,27 @@ class NacdStatistic:
         self._s = None
         self._dirs.clear()
         self._frozen = False
+        self._updates = 0
 
     def update(self, a: np.ndarray) -> StatisticSample:
         v = np.asarray(a, dtype=np.float64)
+        self._updates += 1
         if self._m is None or self._s is None:
             self._m = v.copy()
             self._s = v.copy()
             return StatisticSample(0.0, 0.0, 0.0)
 
+        # Bias correction: for the first 1/alpha samples an EWMA seeded from a
+        # single value is little more than that value, so it carries the noise
+        # of one sample and the statistic decays for a full time constant
+        # afterwards. Using max(alpha, 1/n) makes each average the exact running
+        # mean until the EWMA horizon is reached, then hands over smoothly --
+        # which removes the transient rather than waiting it out.
+        a_long = max(self.alpha_long, 1.0 / self._updates)
+        a_short = max(self.alpha_short, 1.0 / self._updates)
         if not self._frozen:
-            self._m = (1.0 - self.alpha_long) * self._m + self.alpha_long * v
-        self._s = (1.0 - self.alpha_short) * self._s + self.alpha_short * v
+            self._m = (1.0 - a_long) * self._m + a_long * v
+        self._s = (1.0 - a_short) * self._s + a_short * v
 
         d = self._s - self._m
         norm_d = float(np.linalg.norm(d))

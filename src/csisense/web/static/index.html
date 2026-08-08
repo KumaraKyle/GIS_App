@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>csisense</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #2b3240;
+    --text: #e6edf3; --dim: #8b949e;
+    --idle: #6e7681; --motion: #3fb950; --still: #d29922; --bad: #f85149;
+    --accent: #58a6ff;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-size: 13px; }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10;
+  }
+  h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .04em; }
+  .spacer { flex: 1; }
+  .pill {
+    padding: 3px 10px; border-radius: 999px; font-size: 11px;
+    border: 1px solid var(--line); color: var(--dim);
+  }
+  .pill.state-motion { background: rgba(63,185,80,.15); color: var(--motion);
+    border-color: var(--motion); }
+  .pill.state-occupied_still { background: rgba(210,153,34,.15); color: var(--still);
+    border-color: var(--still); }
+  .pill.state-idle { color: var(--idle); }
+  .pill.warn { background: rgba(248,81,73,.15); color: var(--bad); border-color: var(--bad); }
+  main { padding: 16px; display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 1100px) { main { grid-template-columns: 2fr 1fr; } }
+  section {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px 14px;
+  }
+  section > h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 0 0 10px; font-weight: 600;
+  }
+  canvas { width: 100%; display: block; border-radius: 4px; background: #05070a; }
+  .link-block { margin-bottom: 14px; }
+  .link-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 4px; font-size: 11px; color: var(--dim);
+  }
+  .link-head b { color: var(--text); font-weight: 600; }
+  .unhealthy { color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { text-align: right; padding: 3px 6px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--dim); font-weight: 500; }
+  .caption { color: var(--dim); font-size: 11px; margin-top: 8px; line-height: 1.5; }
+  .notice {
+    border-left: 2px solid var(--still); padding: 8px 10px; margin-top: 8px;
+    background: rgba(210,153,34,.08); color: var(--dim); line-height: 1.5;
+  }
+  #events { max-height: 260px; overflow-y: auto; font-size: 11px; }
+  #events div { padding: 3px 0; border-bottom: 1px solid var(--line); color: var(--dim); }
+  #events b { color: var(--text); }
+  button {
+    background: transparent; color: var(--accent); border: 1px solid var(--line);
+    border-radius: 5px; padding: 4px 12px; font: inherit; font-size: 11px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>csisense</h1>
+  <span id="state" class="pill state-idle">idle</span>
+  <span id="stat" class="pill">z 0.00</span>
+  <span id="calib" class="pill">uncalibrated</span>
+  <span class="spacer"></span>
+  <button id="recalibrate">Recalibrate</button>
+  <span id="conn" class="pill">connecting…</span>
+</header>
+
+<main>
+  <div style="display:grid;gap:16px">
+    <section>
+      <h2>Channel state · per link</h2>
+      <div id="waterfalls"></div>
+      <p class="caption">
+        Subcarrier amplitude over time, newest at the right. Vertical banding is
+        frequency-selective fading; horizontal disturbance is something moving.
+      </p>
+    </section>
+
+    <section>
+      <h2>Motion statistic</h2>
+      <canvas id="trace" height="160"></canvas>
+      <p class="caption">
+        Deviations above the calibrated quiet baseline. Solid line is the
+        trigger threshold, dashed is the release threshold — the gap between
+        them is what stops the state chattering.
+      </p>
+    </section>
+  </div>
+
+  <div style="display:grid;gap:16px;align-content:start">
+    <section>
+      <h2>Spatial</h2>
+      <canvas id="rti" height="260"></canvas>
+      <p class="caption" id="rti-caption">—</p>
+      <div class="notice" id="rti-notice" hidden></div>
+    </section>
+
+    <section>
+      <h2>Links</h2>
+      <table id="links">
+        <thead><tr><th>link</th><th>z</th><th>Hz</th><th>loss</th><th>RSSI</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Events</h2>
+      <div id="events"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+const el = (id) => document.getElementById(id);
+const waterfalls = new Map();   // link_id -> {canvas, ctx, buffer, bctx, head}
+const traces = new Map();       // link_id -> number[]  (client-side scrollback)
+const eventLog = [];            // newest last
+const ellipseCache = new Map(); // link_id -> static ellipse points
+const TRACE_HISTORY = 300;
+let latest = null;
+
+// --- connection -----------------------------------------------------------
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/ws/live`);
+
+  ws.onopen = () => { el("conn").textContent = "live"; el("conn").className = "pill"; };
+  ws.onclose = () => {
+    el("conn").textContent = "reconnecting…";
+    el("conn").className = "pill warn";
+    setTimeout(connect, 1000);
+  };
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    // Traces and events arrive incrementally; the client keeps the history.
+    if (msg.full) { traces.clear(); eventLog.length = 0; }
+    for (const [linkId, values] of Object.entries(msg.traces || {})) {
+      const buf = traces.get(linkId) || [];
+      buf.push(...values);
+      if (buf.length > TRACE_HISTORY) buf.splice(0, buf.length - TRACE_HISTORY);
+      traces.set(linkId, buf);
+    }
+    for (const e of msg.events || []) eventLog.push(e);
+    if (eventLog.length > 60) eventLog.splice(0, eventLog.length - 60);
+    latest = msg;
+    render(msg);
+  };
+}
+
+el("recalibrate").onclick = async () => {
+  await fetch("/api/calibrate", { method: "POST" });
+};
+
+// --- waterfall ------------------------------------------------------------
+
+function ensureWaterfall(linkId) {
+  let entry = waterfalls.get(linkId);
+  if (entry) return entry;
+
+  const block = document.createElement("div");
+  block.className = "link-block";
+  const head = document.createElement("div");
+  head.className = "link-head";
+  head.innerHTML = `<b>${linkId}</b><span class="meta"></span>`;
+  const canvas = document.createElement("canvas");
+  canvas.height = 96;
+  block.append(head, canvas);
+  el("waterfalls").append(block);
+
+  entry = { canvas, ctx: canvas.getContext("2d"), head: head.querySelector(".meta") };
+  waterfalls.set(linkId, entry);
+  return entry;
+}
+
+// Perceptually ordered ramp: dark -> blue -> green -> yellow. Monotonic in
+// lightness so intensity reads correctly in greyscale too.
+function colour(v) {
+  const stops = [
+    [0.00, 5, 7, 10], [0.25, 20, 50, 90], [0.50, 30, 120, 130],
+    [0.75, 90, 190, 90], [1.00, 250, 230, 130],
+  ];
+  for (let i = 1; i < stops.length; i++) {
+    if (v <= stops[i][0]) {
+      const [p0, r0, g0, b0] = stops[i - 1], [p1, r1, g1, b1] = stops[i];
+      const t = (v - p0) / (p1 - p0);
+      return [r0 + (r1 - r0) * t, g0 + (g1 - g0) * t, b0 + (b1 - b0) * t];
+    }
+  }
+  return [250, 230, 130];
+}
+
+const HISTORY = 512;   // columns of scrollback kept client-side
+
+// The server sends only the columns added since the last tick -- usually one.
+// Each link keeps its own offscreen buffer and scrolls it left, which is both
+// far cheaper than redrawing history and the reason the uplink stays at a few
+// kB/s instead of megabytes.
+function drawWaterfall(linkId, wf, meta, isFull) {
+  const entry = ensureWaterfall(linkId);
+  const { canvas, ctx, head } = entry;
+  const { rows, cols, data } = wf;
+  if (!rows || !cols) return;
+
+  if (!entry.buffer || entry.buffer.height !== cols) {
+    entry.buffer = document.createElement("canvas");
+    entry.buffer.width = HISTORY;
+    entry.buffer.height = cols;
+    entry.bctx = entry.buffer.getContext("2d");
+    entry.bctx.fillStyle = "#05070a";
+    entry.bctx.fillRect(0, 0, HISTORY, cols);
+  }
+  const bctx = entry.bctx;
+
+  if (isFull) {
+    bctx.fillStyle = "#05070a";
+    bctx.fillRect(0, 0, HISTORY, cols);
+  } else {
+    // Scroll left by the number of new columns.
+    bctx.drawImage(entry.buffer, -rows, 0);
+  }
+
+  // Rows are time (oldest first), cols are subcarriers. Drawn transposed so
+  // time runs left-to-right, which is how a spectrogram is normally read.
+  const img = bctx.createImageData(rows, cols);
+  for (let t = 0; t < rows; t++) {
+    for (let c = 0; c < cols; c++) {
+      const v = data[t * cols + c] / 255;
+      const [r, g, b] = colour(v);
+      const px = ((cols - 1 - c) * rows + t) * 4;
+      img.data[px] = r; img.data[px + 1] = g; img.data[px + 2] = b; img.data[px + 3] = 255;
+    }
+  }
+  bctx.putImageData(img, HISTORY - rows, 0);
+
+  const width = canvas.clientWidth || 600;
+  if (canvas.width !== width) canvas.width = width;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(entry.buffer, 0, 0, canvas.width, canvas.height);
+
+  if (meta) {
+    const cls = meta.healthy ? "" : "unhealthy";
+    head.innerHTML = `<span class="${cls}">` +
+      `${meta.rate_hz.toFixed(0)} Hz · ${meta.loss_pct_1m.toFixed(1)}% loss · ` +
+      `${meta.rssi.toFixed(0)} dBm · gain ${meta.gain_locked ? "locked" : "free"}` +
+      `</span>`;
+  }
+}
+
+// --- motion trace ---------------------------------------------------------
+
+function drawTrace(state) {
+  const canvas = el("trace");
+  const width = canvas.clientWidth || 600;
+  if (canvas.width !== width) canvas.width = width;
+  const ctx = canvas.getContext("2d");
+  const h = canvas.height;
+
+  ctx.fillStyle = "#05070a";
+  ctx.fillRect(0, 0, width, h);
+
+  const series = [...traces.entries()];
+  if (!series.length) return;
+
+  let peak = Math.max(state.k_on * 1.4, 4);
+  for (const [, values] of series) for (const v of values) peak = Math.max(peak, v);
+  const y = (v) => h - (v / peak) * (h - 12) - 6;
+
+  // Thresholds first, so the traces draw over them.
+  ctx.strokeStyle = "#f85149"; ctx.lineWidth = 1; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(0, y(state.k_on)); ctx.lineTo(width, y(state.k_on)); ctx.stroke();
+  ctx.strokeStyle = "#d29922"; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(0, y(state.k_off)); ctx.lineTo(width, y(state.k_off)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const palette = ["#58a6ff", "#3fb950", "#d29922", "#bc8cff", "#f85149"];
+  series.forEach(([linkId, values], i) => {
+    ctx.strokeStyle = palette[i % palette.length];
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    values.forEach((v, j) => {
+      const px = (j / Math.max(values.length - 1, 1)) * width;
+      j ? ctx.lineTo(px, y(v)) : ctx.moveTo(px, y(v));
+    });
+    ctx.stroke();
+    ctx.fillStyle = palette[i % palette.length];
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText(linkId, 6, 12 + i * 12);
+  });
+
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.fillText(`k_on ${state.k_on}`, width - 62, y(state.k_on) - 3);
+}
+
+// --- spatial panel --------------------------------------------------------
+
+function drawRti(rti) {
+  const canvas = el("rti");
+  const width = canvas.clientWidth || 320;
+  if (canvas.width !== width) canvas.width = width;
+  const ctx = canvas.getContext("2d");
+  const h = canvas.height;
+  ctx.fillStyle = "#05070a";
+  ctx.fillRect(0, 0, width, h);
+
+  if (!rti) { el("rti-caption").textContent = "no geometry configured"; return; }
+  el("rti-caption").textContent = rti.caption || "";
+
+  const notice = el("rti-notice");
+  if (!rti.enabled && rti.reason) {
+    notice.hidden = false;
+    notice.textContent = rti.reason;
+  } else {
+    notice.hidden = true;
+  }
+
+  const room = rti.room || [5, 4];
+  const pad = 14;
+  const scale = Math.min((width - 2 * pad) / room[0], (h - 2 * pad) / room[1]);
+  const X = (x) => pad + x * scale;
+  const Y = (y) => h - pad - y * scale;
+
+  ctx.strokeStyle = "#2b3240";
+  ctx.strokeRect(X(0), Y(room[1]), room[0] * scale, room[1] * scale);
+
+  if (rti.image) {
+    // Confidence drives alpha, so regions the geometry cannot constrain fade
+    // out rather than rendering as a confident blob. No contours: a contour
+    // implies an edge, and this data has none.
+    const [ny, nx] = rti.shape;
+    const cw = (room[0] * scale) / nx, ch = (room[1] * scale) / ny;
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const v = rti.image[j * nx + i] / 255;
+        const conf = rti.confidence[j * nx + i] / 255;
+        if (v < 0.15) continue;
+        const [r, g, b] = colour(v);
+        ctx.fillStyle = `rgba(${r|0},${g|0},${b|0},${(v * conf).toFixed(3)})`;
+        ctx.fillRect(X(i * room[0] / nx), Y((j + 1) * room[1] / ny), cw + 1, ch + 1);
+      }
+    }
+    if (rti.peak_xy) {
+      ctx.strokeStyle = "#e6edf3"; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(X(rti.peak_xy[0]), Y(rti.peak_xy[1]), 5, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+  } else if (rti.ellipses) {
+    // The honest low-link view: a disturbance on a link means something is
+    // somewhere on that curve. No point estimate is drawn, because none exists.
+    for (const e of rti.ellipses) {
+      // Points arrive only on a full payload; keep them across updates.
+      if (e.points) ellipseCache.set(e.link_id, e.points);
+      const points = e.points || ellipseCache.get(e.link_id);
+      if (!points) continue;
+      const hot = Math.min(Math.max(e.z / 8, 0), 1);
+      ctx.strokeStyle = `rgba(${88 + hot * 160},${166 - hot * 80},${255 - hot * 160},${0.25 + hot * 0.7})`;
+      ctx.lineWidth = 1 + hot * 2;
+      ctx.beginPath();
+      points.forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+      ctx.closePath();
+      ctx.stroke();
+    }
+    for (const n of rti.nodes || []) {
+      ctx.fillStyle = "#58a6ff";
+      ctx.beginPath();
+      ctx.arc(X(n.xy[0]), Y(n.xy[1]), 3.5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+}
+
+// --- render ---------------------------------------------------------------
+
+function render(state) {
+  const badge = el("state");
+  badge.textContent = state.presence.replace("_", " ");
+  badge.className = `pill state-${state.presence}`;
+
+  el("stat").textContent = `z ${state.motion_stat.toFixed(2)}`;
+
+  const calib = el("calib");
+  if (state.blind) {
+    calib.textContent = "no healthy link";
+    calib.className = "pill warn";
+  } else if (!state.calibrated) {
+    const pct = (state.calibration_progress * 100).toFixed(0);
+    calib.textContent = state.calibration_progress > 0
+      ? `calibrating ${pct}%` : "uncalibrated";
+    calib.className = "pill warn";
+  } else {
+    calib.textContent = "calibrated";
+    calib.className = "pill";
+  }
+
+  for (const [linkId, wf] of Object.entries(state.waterfall || {})) {
+    drawWaterfall(linkId, wf, (state.links || {})[linkId], state.full);
+  }
+  drawTrace(state);
+  drawRti(state.rti);
+
+  const tbody = el("links").querySelector("tbody");
+  tbody.innerHTML = "";
+  for (const [linkId, m] of Object.entries(state.links || {})) {
+    const tr = document.createElement("tr");
+    if (!m.healthy) tr.className = "unhealthy";
+    tr.innerHTML = `<td>${linkId}</td><td>${m.z.toFixed(2)}</td>` +
+      `<td>${m.rate_hz.toFixed(0)}</td><td>${m.loss_pct_1m.toFixed(1)}%</td>` +
+      `<td>${m.rssi.toFixed(0)}</td>`;
+    tbody.append(tr);
+  }
+
+  const events = el("events");
+  events.innerHTML = "";
+  for (const e of eventLog.slice().reverse()) {
+    const div = document.createElement("div");
+    if (e.kind === "presence") {
+      div.innerHTML = `<b>${e.previous} → ${e.state}</b> z=${e.stat} (${e.reason})`;
+    } else if (e.kind === "gesture") {
+      div.innerHTML = `<b>${e.gesture}</b> ${(e.confidence * 100).toFixed(0)}% [${e.tier}]`;
+    } else {
+      div.textContent = `${e.link_id} ${e.rate_hz} Hz, ${e.loss_pct_1m}% loss`;
+    }
+    events.append(div);
+  }
+}
+
+// Re-render on resize without consuming the buffer again: the incremental
+// columns have already been drawn, so only the blit needs repeating.
+window.addEventListener("resize", () => {
+  for (const entry of waterfalls.values()) {
+    if (!entry.buffer) continue;
+    const w = entry.canvas.clientWidth || 600;
+    if (entry.canvas.width !== w) entry.canvas.width = w;
+    entry.ctx.imageSmoothingEnabled = false;
+    entry.ctx.drawImage(entry.buffer, 0, 0, entry.canvas.width, entry.canvas.height);
+  }
+  if (latest) { drawTrace(latest); drawRti(latest.rti); }
+});
+connect();
+</script>
+</body>
+</html>

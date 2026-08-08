@@ -16,8 +16,8 @@ htmlcov/
 # Test fixtures under tests/fixtures/ are committed deliberately.
 data/
 
-# Built frontend, produced by `npm run build` in web/
-src/csisense/web/static/
+# The dashboard is a single hand-written page, not a build artefact, so it is
+# committed. No Node toolchain is needed to run this on a Pi.
 web/node_modules/
 
 config/config.yaml

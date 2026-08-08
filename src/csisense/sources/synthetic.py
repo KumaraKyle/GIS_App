@@ -135,6 +135,22 @@ def _sitting(link: int, _rng: np.random.Generator) -> list[Reflector]:
     return [Reflector(path_length=d, strength=0.4)]
 
 
+def _still_person(link: int, _rng: np.random.Generator) -> list[Reflector]:
+    """Someone in the room, not moving at all.
+
+    A motionless body is a static reflector, which is indistinguishable from a
+    wall. No amount of processing separates them, because the only thing CSI
+    sensing measures is change. This exists so that limit is asserted rather
+    than assumed.
+    """
+    d = 3.2 + 0.4 * link
+
+    def path(_t: float) -> float:
+        return d
+
+    return [Reflector(path_length=path, strength=0.4)]
+
+
 def _waving(link: int, _rng: np.random.Generator) -> list[Reflector]:
     """A stationary torso plus a hand oscillating at ~2Hz.
 
@@ -167,6 +183,8 @@ SCENARIOS: dict[str, Scenario] = {
         "approach", _approaching, duration_s=20.0, motion_intervals=((0.0, 20.0),)
     ),
     "sit": Scenario("sit", _sitting, duration_s=20.0, motion_intervals=((8.0, 11.0),)),
+    # Present but perfectly motionless -- deliberately no motion_intervals.
+    "still_person": Scenario("still_person", _still_person, duration_s=20.0),
     "wave": Scenario("wave", _waving, duration_s=20.0, motion_intervals=((6.0, 14.0),)),
     "agc_glitch": Scenario(
         "agc_glitch",
@@ -217,6 +235,9 @@ class SyntheticCsiSource(CsiSource):
         duration_s: float | None = None,
         loss_pct: float | None = None,
         realtime: bool = False,
+        # Repeat the scenario indefinitely. Used by the dashboard so a demo
+        # keeps producing motion instead of going quiet after 20 seconds.
+        loop: bool = False,
         # Peak IQ magnitude. 100 keeps a comfortable margin inside int8 (+-127)
         # while using most of the range, which is what a receiver with working
         # AGC does. Setting it much lower wastes bits and makes quantisation
@@ -239,6 +260,7 @@ class SyntheticCsiSource(CsiSource):
         self._duration_s = duration_s if duration_s is not None else self._scenario.duration_s
         self._loss_pct = loss_pct if loss_pct is not None else self._scenario.loss_pct
         self._realtime = realtime
+        self._loop = loop
         self._scale = scale
         self._epoch_ns = epoch_ns
 
@@ -306,6 +328,13 @@ class SyntheticCsiSource(CsiSource):
         return window is not None and window[0] <= t < window[1]
 
     async def frames(self) -> AsyncIterator[CsiFrame]:
+        while True:
+            async for frame in self._one_pass():
+                yield frame
+            if not self._loop:
+                return
+
+    async def _one_pass(self) -> AsyncIterator[CsiFrame]:
         dt = 1.0 / self._rate_hz
         n_steps = int(self._duration_s * self._rate_hz)
         noise_sigma = 10.0 ** (-self._snr_db / 20.0)

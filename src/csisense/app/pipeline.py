@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from csisense.config import AppConfig
 from csisense.dsp.chain import DspChain
@@ -74,6 +75,9 @@ class Pipeline:
         self.stats = PipelineStats()
         self._source_info = source_info
         self._nominal_rate_hz = source_info.rate_hz if source_info else 100.0
+        # Optional, and deliberately not an event sink: the tap is written
+        # synchronously from step() with no I/O, so step stays pure.
+        self.tap: Any = None
 
         # One DSP chain per link: filter state, PCA basis and subcarrier
         # ranking are all link-specific, because two antennas in the same room
@@ -121,24 +125,49 @@ class Pipeline:
         quality = self._quality.update(frame)
         if quality is not None:
             events.append(quality)
+            if self.tap is not None:
+                self.tap.record_link_state(
+                    link_id,
+                    rate_hz=quality.rate_hz,
+                    loss_pct_1m=quality.loss_pct_1m,
+                    rssi=quality.rssi,
+                    gain_locked=quality.gain_locked,
+                )
 
         features = self._chain_for(frame).process(frame)
-        if features is not None and self.presence is not None:
-            self.presence.set_link_health(
-                link_id,
-                self._quality.is_healthy(
+        if features is not None:
+            if self.tap is not None:
+                self.tap.record_features(features)
+            if self.presence is not None:
+                healthy = self._quality.is_healthy(
                     link_id,
                     frame.ts_host_ns,
                     nominal_rate_hz=self._nominal_rate_hz,
                     max_loss_pct=self.config.presence.max_link_loss_pct,
-                ),
-            )
-            presence_event = self.presence.update(features)
-            if presence_event is not None:
-                events.append(presence_event)
+                )
+                self.presence.set_link_health(link_id, healthy)
+                presence_event = self.presence.update(features)
+                if presence_event is not None:
+                    events.append(presence_event)
+                self._update_tap(link_id, healthy)
+
+        if self.tap is not None:
+            for event in events:
+                self.tap.record_event(event)
 
         self.stats.events += len(events)
         return events
+
+    def _update_tap(self, link_id: str, healthy: bool) -> None:
+        if self.tap is None or self.presence is None:
+            return
+        reading = self.presence.readings.get(link_id)
+        self.tap.record_link_state(link_id, z=reading.z if reading else 0.0, healthy=healthy)
+        self.tap.presence = self.presence.state
+        self.tap.motion_stat = self.presence.motion_stat
+        self.tap.calibrated = self.presence.calibrated
+        self.tap.calibration_progress = self.presence.calibration_progress()
+        self.tap.blind = self.presence.blind
 
     def start_calibration(self, duration_s: float | None = None) -> None:
         if self.presence is not None:

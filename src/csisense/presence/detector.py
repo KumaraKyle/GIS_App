@@ -89,8 +89,26 @@ class PresenceDetector:
     def calibrated(self) -> bool:
         return bool(self.baselines)
 
+    def _all_settled(self) -> bool:
+        return bool(self._stats) and all(s.settled for s in self._stats.values())
+
+    @property
+    def settling(self) -> bool:
+        """Waiting for the long-term references to converge."""
+        return self._calibration is not None and not self._all_settled()
+
     def calibration_progress(self) -> float:
-        return self._calibration.progress() if self._calibration else 0.0
+        """Overall progress, counting the settle phase as the first half.
+
+        Reported honestly rather than sitting at 0% for a minute: settling is
+        genuinely part of what calibration is waiting for.
+        """
+        if self._calibration is None:
+            return 0.0
+        if not self._all_settled():
+            settle = min(s.settle_progress for s in self._stats.values()) if self._stats else 0.0
+            return 0.5 * settle
+        return 0.5 + 0.5 * self._calibration.progress()
 
     def _finish_calibration(self) -> None:
         assert self._calibration is not None
@@ -128,7 +146,9 @@ class PresenceDetector:
         sample = stat.update(features.amplitude)
 
         if self._calibration is not None:
-            if stat.warm:
+            # Only collect once every link's reference has converged; otherwise
+            # the baseline records the settling transient, not the quiet room.
+            if stat.warm and self._all_settled():
                 self._calibration.add(link_id, sample.value)
             if self._calibration.complete():
                 self._finish_calibration()
