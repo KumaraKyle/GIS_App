@@ -80,9 +80,19 @@ class CsiFrame:
     channel: int = 0
     flags: int = 0
     boot_id: int = 0
+    # Which link-layer mode produced this measurement. The set of physically
+    # meaningful subcarriers differs between legacy LLTF and HT-LTF, so the DSP
+    # subcarrier selector genuinely needs this.
+    sig_mode: int = 0
+    # Transmitter MAC, "aa:bb:cc:dd:ee:ff". Nexmon sources use it to implement
+    # the configured tx_mac filter; empty when the source does not report one.
+    tx_mac: str = ""
     # Present only for ESP frames: the transmitter's beacon counter, which lets
     # multiple receivers be aligned exactly without any clock arithmetic.
     beacon_seq: int | None = None
+    # Which node transmitted the beacon this record answers. Meaningful once
+    # more than one ESP32 transmits in a round-robin mesh; 0 for a single TX.
+    tx_node_id: int = 0
     # Gain the radio actually used, where it reports it. None means "unknown",
     # which is the common case on the original ESP32 and is why gain locking in
     # firmware matters so much.
@@ -132,6 +142,31 @@ NEXMON_HEADER_LEN: Final = _NEXMON_HEADER.size  # 16
 # supported here; it would need a separate unpack path.
 _INT16_CHIPS: Final = frozenset({0x4C, 0x6A})
 
+# Broadcom "d11" chanspec bit layout. NOT YET VALIDATED against a real capture --
+# the constants come from the Broadcom headers, but which chanspec revision a
+# given nexmon build emits is build-specific. decode_chanspec is therefore
+# advisory: a mismatch warns, it does not discard data.
+_CHANSPEC_CHAN_MASK: Final = 0x00FF
+_CHANSPEC_BW_MASK: Final = 0x3800
+_CHANSPEC_BAND_MASK: Final = 0xC000
+_CHANSPEC_BW: Final = {0x1000: 20, 0x1800: 40, 0x2000: 80, 0x2800: 160}
+
+
+def decode_chanspec(chanspec: int) -> tuple[int, int, int]:
+    """Split a Broadcom chanspec into ``(channel, bandwidth_mhz, band_ghz)``.
+
+    Returns ``bandwidth_mhz = 0`` when the width bits are unrecognised rather
+    than guessing, so callers can tell "unknown" from "20MHz".
+    """
+    channel = chanspec & _CHANSPEC_CHAN_MASK
+    bandwidth = _CHANSPEC_BW.get(chanspec & _CHANSPEC_BW_MASK, 0)
+    band = 5 if (chanspec & _CHANSPEC_BAND_MASK) == _CHANSPEC_BAND_MASK else 2
+    return channel, bandwidth, band
+
+
+def format_mac(raw: bytes) -> str:
+    return ":".join(f"{b:02x}" for b in raw)
+
 
 def decode_nexmon_udp(
     payload: bytes,
@@ -164,7 +199,7 @@ def decode_nexmon_udp(
             f"nexmon payload too short: {len(payload)} bytes, need at least {NEXMON_HEADER_LEN}"
         )
 
-    magic, _mac, seq, core_stream, _chanspec, chip = _NEXMON_HEADER.unpack_from(payload)
+    magic, mac, seq, core_stream, chanspec, chip = _NEXMON_HEADER.unpack_from(payload)
     if magic != NEXMON_MAGIC:
         raise WireFormatError(f"bad nexmon magic 0x{magic:04x}, expected 0x{NEXMON_MAGIC:04x}")
 
@@ -193,12 +228,16 @@ def decode_nexmon_udp(
     csi.real = raw[1::2]
     csi.imag = raw[0::2]
 
+    channel, _bw, _band = decode_chanspec(chanspec)
+
     return CsiFrame(
         source_kind=SourceKind.NEXMON,
         sensor_id=sensor_id,
         csi=csi,
         ts_host_ns=ts_host_ns,
         seq=seq,
+        channel=channel,
+        tx_mac=format_mac(mac),
         # The Pi timestamps on arrival; the chip does not give us a usable one.
         ts_device_us=ts_host_ns // 1000,
         flags=FLAG_CLOCK_SYNCED,
@@ -216,16 +255,39 @@ def decode_nexmon_udp(
 # ---------------------------------------------------------------------------
 
 ESP_MAGIC: Final = 0x31495343  # b"CSI1" little-endian
-ESP_WIRE_VERSION: Final = 1
+# v2 spends one of v1's two padding bytes on tx_node_id. Done before any
+# training data exists, because changing the record layout afterwards would
+# invalidate every recorded session.
+ESP_WIRE_VERSION: Final = 2
 ESP_UDP_PORT: Final = 5566
 
 _ESP_HEADER: Final = struct.Struct("<IBBBBII")
 ESP_HEADER_LEN: Final = _ESP_HEADER.size  # 16
 
-# Trailing 2x is explicit padding so the C struct's natural alignment and this
+# Trailing 1x is explicit padding so the C struct's natural alignment and this
 # format agree. Do not remove it without changing csi_wire.h.
-_ESP_RECORD: Final = struct.Struct("<IIIbbBBBBBBH2x")
+_ESP_RECORD: Final = struct.Struct("<IIIbbBBBBBBHB1x")
 ESP_RECORD_HEADER_LEN: Final = _ESP_RECORD.size  # 24
+
+# Sequence counters wrap, and the width differs per source. Treating them as
+# unbounded silently mis-counts loss at every wrap.
+SEQ_SPACE: Final = {
+    # 802.11 sequence number: 12 bits. At 100Hz this wraps every ~41 seconds.
+    SourceKind.NEXMON: 1 << 12,
+    SourceKind.ESP: 1 << 32,
+    SourceKind.SYNTHETIC: 1 << 32,
+}
+
+
+def seq_delta(current: int, previous: int, seq_space: int) -> int:
+    """Signed distance between two sequence numbers, wrap-aware.
+
+    Returns a small negative number for genuine reordering and a small positive
+    number across a wrap boundary, instead of the enormous jump a plain
+    subtraction produces.
+    """
+    half = seq_space // 2
+    return ((current - previous + half) % seq_space) - half
 
 
 @dataclass(slots=True)
@@ -297,9 +359,10 @@ def decode_esp_datagram(
             fft_gain,
             channel,
             _rate,
-            _sig_mode,
+            sig_mode,
             n_sub,
             payload_len,
+            tx_node_id,
         ) = _ESP_RECORD.unpack_from(payload, offset)
         offset += ESP_RECORD_HEADER_LEN
 
@@ -335,6 +398,8 @@ def decode_esp_datagram(
                 noise_floor=noise_floor,
                 ts_device_us=esp_ts_us,
                 channel=channel,
+                sig_mode=sig_mode,
+                tx_node_id=tx_node_id,
                 flags=flags,
                 boot_id=boot_id,
                 # Only meaningful once firmware has locked the gain; the flag
@@ -386,9 +451,10 @@ def encode_esp_datagram(
             f.fft_gain or 0,
             f.channel,
             0,  # rate
-            0,  # sig_mode
+            f.sig_mode,
             n_sub,
             2 * n_sub,
+            f.tx_node_id,
         )
         out += interleaved.tobytes()
 
@@ -407,11 +473,15 @@ __all__ = [
     "NEXMON_HEADER_LEN",
     "NEXMON_MAGIC",
     "NEXMON_UDP_PORT",
+    "SEQ_SPACE",
     "CsiFrame",
     "EspDatagramInfo",
     "SourceKind",
     "WireFormatError",
+    "decode_chanspec",
     "decode_esp_datagram",
     "decode_nexmon_udp",
     "encode_esp_datagram",
+    "format_mac",
+    "seq_delta",
 ]

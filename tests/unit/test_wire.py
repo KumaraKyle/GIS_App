@@ -25,6 +25,7 @@ from csisense.wire import (
     CsiFrame,
     SourceKind,
     WireFormatError,
+    decode_chanspec,
     decode_esp_datagram,
     decode_nexmon_udp,
     encode_esp_datagram,
@@ -266,6 +267,54 @@ def test_nexmon_never_crashes_on_arbitrary_bytes(data):
 
 
 # --- Header size contract with firmware -----------------------------------
+
+
+def test_esp_carries_tx_node_id_and_sig_mode():
+    """Wire v2. tx_node_id is what lets a receiver say WHICH node's beacon it
+    answered, which is required before a multi-TX mesh can be aligned."""
+    f = make_esp_frame()
+    f.tx_node_id = 3
+    f.sig_mode = 1
+
+    _, out = decode_esp_datagram(encode_esp_datagram([f], sensor_id=0), ts_host_ns=0)
+
+    assert out[0].tx_node_id == 3
+    assert out[0].sig_mode == 1
+
+
+def test_esp_v1_datagram_is_rejected():
+    """A v1 sender and a v2 host disagree about the record layout. Failing loudly
+    beats decoding tx_node_id out of what used to be padding."""
+    payload = bytearray(encode_esp_datagram([make_esp_frame()], sensor_id=0))
+    payload[4] = 1
+    with pytest.raises(WireFormatError, match="wire version"):
+        decode_esp_datagram(bytes(payload), ts_host_ns=0)
+
+
+def test_nexmon_reports_source_mac():
+    """Needed to implement the configured tx_mac filter."""
+    frame = decode_nexmon_udp(make_nexmon_payload(64), ts_host_ns=0)
+    assert frame.tx_mac == "aa:bb:cc:dd:ee:ff"
+
+
+@pytest.mark.parametrize(
+    ("chanspec", "channel", "bandwidth", "band"),
+    [
+        (0xE29D, 157, 80, 5),  # 5GHz ch157 @ 80MHz -- the Pi's intended link
+        (0x1006, 6, 20, 2),  # 2.4GHz ch6 @ 20MHz -- where the ESP32s live
+        (0x0000, 0, 0, 2),  # unknown width reports 0 rather than guessing
+    ],
+)
+def test_chanspec_decoding(chanspec, channel, bandwidth, band):
+    assert decode_chanspec(chanspec) == (channel, bandwidth, band)
+
+
+def test_nexmon_populates_channel_from_chanspec():
+    payload = (
+        struct.pack("<H6sHHHH", NEXMON_MAGIC, b"\x00" * 6, 0, 0, 0xE29D, BCM43455C0_CHIP_ID)
+        + np.zeros(2 * 256, dtype="<i2").tobytes()
+    )
+    assert decode_nexmon_udp(payload, ts_host_ns=0).channel == 157
 
 
 def test_header_sizes_match_firmware_contract():

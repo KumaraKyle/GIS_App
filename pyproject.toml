@@ -73,6 +73,11 @@ warn_redundant_casts = true
 
 # Modules where a type error means silently corrupted signal data.
 [[tool.mypy.overrides]]
-module = ["csisense.wire", "csisense.dsp.*", "csisense.presence.*"]
+module = ["csisense.wire", "csisense.dsp.*", "csisense.presence.*", "csisense.rti.*"]
 disallow_untyped_defs = true
 strict_equality = true
+
+# scipy ships no stubs and scipy-stubs is not worth pinning on a Pi install.
+[[tool.mypy.overrides]]
+module = ["scipy.*"]
+ignore_missing_imports = true

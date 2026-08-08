@@ -38,7 +38,8 @@ from csisense.sources.base import CsiSource, SourceInfo
 from csisense.wire import FLAG_GAIN_LOCKED, CsiFrame, SourceKind
 
 SPEED_OF_LIGHT = 299_792_458.0
-CARRIER_HZ_2G4 = 2.437e9  # channel 6
+CARRIER_HZ_2G4 = 2.437e9  # channel 6, where the ESP32 links live
+CARRIER_HZ_5G = 5.785e9  # channel 157, where the Pi's 80MHz link lives
 SUBCARRIER_SPACING_HZ = 312_500.0
 
 # Fixed epoch (2024-01-01T00:00:00Z) so generated frames carry reproducible
@@ -208,6 +209,8 @@ class SyntheticCsiSource(CsiSource):
         realtime: bool = False,
         scale: float = 40.0,
         epoch_ns: int = DEFAULT_EPOCH_NS,
+        carrier_hz: float = CARRIER_HZ_2G4,
+        source_kind: SourceKind = SourceKind.SYNTHETIC,
     ) -> None:
         if scenario not in SCENARIOS:
             raise ValueError(
@@ -225,9 +228,15 @@ class SyntheticCsiSource(CsiSource):
         self._scale = scale
         self._epoch_ns = epoch_ns
 
-        # Subcarrier frequencies, centred on the carrier.
+        self._carrier_hz = carrier_hz
+        self._source_kind = source_kind
+
+        # Subcarrier frequencies, centred on the carrier. The carrier matters
+        # more than it looks: at 5GHz the wavelength is half that at 2.4GHz, so
+        # identical motion produces twice the phase rotation. A threshold tuned
+        # on 2.4GHz synthetic data is simply wrong for the Pi's 5GHz link.
         k = np.arange(n_sub) - n_sub // 2
-        self._freqs = (CARRIER_HZ_2G4 + k * SUBCARRIER_SPACING_HZ).astype(np.float64)
+        self._freqs = (carrier_hz + k * SUBCARRIER_SPACING_HZ).astype(np.float64)
 
         # The static environment: a handful of fixed paths per link. This is
         # "the room", and it dominates the received signal -- which is precisely
@@ -248,10 +257,10 @@ class SyntheticCsiSource(CsiSource):
 
     def info(self) -> SourceInfo:
         return SourceInfo(
-            kind=SourceKind.SYNTHETIC,
+            kind=self._source_kind,
             n_sub=self._n_sub,
             rate_hz=self._rate_hz,
-            link_ids=tuple(f"synthetic:{i}" for i in range(self._n_links)),
+            link_ids=tuple(f"{self._source_kind.value}:{i}" for i in range(self._n_links)),
         )
 
     @property
@@ -314,7 +323,7 @@ class SyntheticCsiSource(CsiSource):
                 )
 
                 yield CsiFrame(
-                    source_kind=SourceKind.SYNTHETIC,
+                    source_kind=self._source_kind,
                     sensor_id=link,
                     csi=csi,
                     ts_host_ns=t0_ns + int(t * 1e9),

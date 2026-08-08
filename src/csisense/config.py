@@ -57,6 +57,18 @@ class NexmonSourceConfig(BaseModel):
         return {20: 64, 40: 128, 80: 256}[self.bandwidth_mhz]
 
 
+class SerialSourceConfig(BaseModel):
+    """esp-csi's stock CSV over USB. Bring-up only.
+
+    Useful for the hour when an ESP32 is on your desk and the UDP path is not
+    working yet. Not for recording: the rate is unreliable and the CSV loses
+    fields the binary format carries.
+    """
+
+    port: str = "/dev/ttyUSB0"
+    baud: int = 921600
+
+
 class ReplaySourceConfig(BaseModel):
     path: Path = Path("data/recordings")
     # 1.0 replays in real time (for demos), 0.0 as fast as possible (for tests).
@@ -74,6 +86,9 @@ class SyntheticSourceConfig(BaseModel):
     loss_pct: float = 0.0
     # Seconds of data to generate; None runs forever.
     duration_s: float | None = None
+    # 2.437e9 simulates the ESP32 links, 5.785e9 the Pi's. At 5GHz the same
+    # motion produces twice the phase rotation, so thresholds do not transfer.
+    carrier_hz: float = 2.437e9
 
 
 class SourceConfig(BaseModel):
@@ -82,6 +97,79 @@ class SourceConfig(BaseModel):
     nexmon: NexmonSourceConfig = Field(default_factory=NexmonSourceConfig)
     replay: ReplaySourceConfig = Field(default_factory=ReplaySourceConfig)
     synthetic: SyntheticSourceConfig = Field(default_factory=SyntheticSourceConfig)
+    serial: SerialSourceConfig = Field(default_factory=SerialSourceConfig)
+
+
+class NodeConfig(BaseModel):
+    """A radio at a known position in the room.
+
+    Positions are metres in a room-local frame, origin wherever you like as long
+    as it stays put. RTI resolution is computed from these, so a node whose real
+    position differs from what is configured will smear the image rather than
+    fail loudly -- measure them properly.
+    """
+
+    id: str
+    position: tuple[float, float]
+    role: Literal["tx", "rx", "both"] = "both"
+
+
+class LinkConfig(BaseModel):
+    """One TX/RX pair, resolved from node ids.
+
+    Link identity lives here and not on the wire, which is what makes "adding a
+    node is a config change" literally true.
+    """
+
+    link_id: str
+    tx: str
+    rx: str
+    enabled: bool = True
+
+
+class GeometryConfig(BaseModel):
+    """Room dimensions and node placement, for RTI."""
+
+    room_size_m: tuple[float, float] = (5.0, 4.0)
+    voxel_m: float = 0.25
+    nodes: list[NodeConfig] = Field(default_factory=list)
+    links: list[LinkConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_links_reference_known_nodes(self) -> GeometryConfig:
+        known = {n.id for n in self.nodes}
+        for link in self.links:
+            missing = {link.tx, link.rx} - known
+            if missing:
+                raise ValueError(
+                    f"link {link.link_id!r} references unknown node(s) {sorted(missing)}; "
+                    f"known nodes: {sorted(known)}"
+                )
+        return self
+
+
+class RtiConfig(BaseModel):
+    """Radio tomographic imaging.
+
+    Below ``min_links`` the inversion is dominated by the regularisation prior
+    rather than by measurements, so any image would be mostly fabricated. The
+    engine falls back to drawing per-link ellipses, which is truthful, and
+    switches to imaging by itself once enough links exist.
+    """
+
+    enabled: bool = True
+    # 2 links leaves ~318 of 320 voxel dimensions unconstrained. 4 is the point
+    # at which a centroid becomes weakly meaningful.
+    min_links: int = 4
+    # Width of the elliptical sensitivity region around each link, in metres.
+    sigma_e_m: float = 0.25
+    # Spatial correlation distance of the smoothness prior.
+    delta_c_m: float = 0.5
+    sigma_x: float = 0.03
+    alpha: float = 0.1
+    # Voxels illuminated by fewer links than this are masked as unreliable.
+    min_coverage: int = 3
+    publish_hz: float = 5.0
 
 
 class SubcarrierConfig(BaseModel):
@@ -119,6 +207,23 @@ class DspConfig(BaseModel):
     # model learning the environment instead of the gesture.
     pca_drop_first: bool = True
     gain_compensation: bool = True
+    # Time constant of the exponentially-weighted covariance the PCA basis is
+    # fitted from, and how often the basis is re-derived.
+    tau_pca_s: float = 60.0
+    pca_refit_every: int = 500
+    # Doppler STFT. noverlap must be below nperseg.
+    doppler_nperseg: int = 64
+    doppler_noverlap: int = 48
+    doppler_max_hz: float = 20.0
+
+    @model_validator(mode="after")
+    def _check_doppler(self) -> DspConfig:
+        if self.doppler_noverlap >= self.doppler_nperseg:
+            raise ValueError(
+                f"doppler_noverlap ({self.doppler_noverlap}) must be below "
+                f"doppler_nperseg ({self.doppler_nperseg})"
+            )
+        return self
 
 
 class PresenceConfig(BaseModel):
@@ -132,6 +237,19 @@ class PresenceConfig(BaseModel):
     # Without this, a person who sits still is absorbed into the baseline within
     # tau_long_s and vanishes. Effectively never turn it off.
     freeze_baseline_when_active: bool = True
+    # How long the statistic must stay below k_off before MOTION relaxes into
+    # OCCUPIED_STILL, so a pause mid-stride does not toggle the state.
+    still_debounce_s: float = 2.0
+    # If every link goes unhealthy for this long, drop to IDLE. Without it a
+    # dead sensor leaves Home Assistant holding occupancy forever and the lights
+    # never turn off.
+    link_loss_timeout_s: float = 10.0
+    # Lag used for the deviation-direction coherence check. Noise decorrelates
+    # over this interval; a person does not.
+    deviation_lag_frames: int = 20
+    # A link contributing above this trailing-window loss is excluded from
+    # fusion entirely rather than dragging the statistic around.
+    max_link_loss_pct: float = 20.0
 
     @model_validator(mode="after")
     def _check_hysteresis(self) -> PresenceConfig:
@@ -181,8 +299,21 @@ class WebConfig(BaseModel):
 
 
 class RecorderConfig(BaseModel):
+    """Recording limits.
+
+    100Hz x 256 subcarriers is ~102 kB/s raw and ~35 kB/s after zstd -- roughly
+    3 GB per link per day. The Pi's SD card will not survive continuous
+    recording, so sessions are bounded by construction rather than by hoping.
+    """
+
     dir: Path = Path("data/recordings")
     compression: str = "zstd"
+    max_session_s: float = 900.0
+    max_session_bytes: int = 512 * 1024 * 1024
+    # Refuse to start a session below this much free disk.
+    min_free_bytes: int = 2 * 1024 * 1024 * 1024
+    row_group_frames: int = 6000
+    row_group_bytes: int = 32 * 1024 * 1024
 
 
 class LoggingConfig(BaseModel):
@@ -199,6 +330,8 @@ class AppConfig(BaseSettings):
 
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
     source: SourceConfig = Field(default_factory=SourceConfig)
+    geometry: GeometryConfig = Field(default_factory=GeometryConfig)
+    rti: RtiConfig = Field(default_factory=RtiConfig)
     dsp: DspConfig = Field(default_factory=DspConfig)
     presence: PresenceConfig = Field(default_factory=PresenceConfig)
     gestures: GesturesConfig = Field(default_factory=GesturesConfig)
@@ -247,12 +380,17 @@ __all__ = [
     "AppConfig",
     "BandpassConfig",
     "DspConfig",
+    "GeometryConfig",
     "GestureTierConfig",
     "GesturesConfig",
+    "LinkConfig",
     "MqttConfig",
     "NexmonSourceConfig",
+    "NodeConfig",
     "PresenceConfig",
     "RecorderConfig",
+    "RtiConfig",
+    "SerialSourceConfig",
     "SourceConfig",
     "SyntheticSourceConfig",
     "WebConfig",

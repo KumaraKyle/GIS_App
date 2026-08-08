@@ -26,7 +26,14 @@ extern "C" {
 
 /* "CSI1" read as a little-endian uint32. */
 #define CSI_WIRE_MAGIC 0x31495343u
-#define CSI_WIRE_VERSION 1u
+/*
+ * v2 spends one of v1's two padding bytes on tx_node_id. The realistic path to
+ * the >= 4 links that RTI needs is several ESP32s transmitting in a round-robin
+ * slot, which means a record must say WHICH node sent the beacon it answers.
+ * Done now, deliberately, because changing the record layout after training
+ * sessions have been recorded would invalidate every one of them.
+ */
+#define CSI_WIRE_VERSION 2u
 #define CSI_WIRE_UDP_PORT 5566u
 
 /* Keep datagrams under the typical 1500-byte MTU with room for IP/UDP headers,
@@ -82,7 +89,8 @@ typedef struct __attribute__((packed)) {
     uint8_t sig_mode;     /* 0 = legacy, 1 = HT */
     uint8_t n_sub;        /* 64 for HT20, 128 for HT40 */
     uint16_t payload_len; /* always 2 * n_sub */
-    uint8_t _pad[2];      /* explicit, so C alignment matches the Python struct format */
+    uint8_t tx_node_id;   /* which node transmitted the beacon; 0 for a single TX */
+    uint8_t _pad[1];      /* explicit, so C alignment matches the Python struct format */
 } csi_record_header_t;
 
 _Static_assert(sizeof(csi_datagram_header_t) == 16, "datagram header must be 16 bytes");

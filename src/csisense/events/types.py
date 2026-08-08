@@ -35,6 +35,9 @@ class PresenceEvent:
     # Per-link statistics. Which link fired is the crude directionality signal
     # that answers "are they approaching from the hallway?".
     per_link: dict[str, float] = field(default_factory=dict)
+    # Why the transition happened. "link_lost" in particular distinguishes "they
+    # left" from "the sensor died", which look identical downstream otherwise.
+    reason: str = ""
 
     @property
     def motion(self) -> bool:
@@ -70,11 +73,18 @@ class LinkQualityEvent:
     ts_ns: int
     link_id: str
     rate_hz: float
+    # Loss over the whole run. Never recovers, so it is history rather than a
+    # health signal -- use loss_pct_1m to decide whether a link is usable now.
     loss_pct: float
     rssi: float
+    # Loss over the trailing minute. This is what gates presence fusion and RTI.
+    loss_pct_1m: float = 0.0
     # False when the radio's gain was free-running, which makes amplitude
     # features untrustworthy and disqualifies the stretch from training use.
     gain_locked: bool = False
+    # Frames the sender dropped before transmission, which sequence-gap counting
+    # cannot see.
+    tx_dropped: int = 0
 
 
 Event = PresenceEvent | GestureEvent | LinkQualityEvent
