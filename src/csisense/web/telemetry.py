@@ -14,9 +14,10 @@ things fall out of that split:
 * Nothing is serialised for a dashboard nobody has open.
 
 Downsampling happens here rather than in the browser because the Pi's uplink is
-the scarce resource: raw is ~102 kB/s per link, and the reduced form is ~1.3.
-Columns are aggregated with **max-abs, not mean** -- averaging five frames of a
-waterfall smears out exactly the transients you are looking at it to see.
+the scarce resource: raw CSI is ~102 kB/s per link, while the reduced,
+incremental stream measures ~39 kB/s for two links at 20Hz. Columns are
+aggregated with **max-abs, not mean** -- averaging five frames of a waterfall
+smears out exactly the transients you are looking at it to see.
 """
 
 from __future__ import annotations

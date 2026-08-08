@@ -6,11 +6,12 @@ what changed recently::
 
     E_t = ||s_t - m_t||^2 / (||m_t||^2 + eps)      # relative dynamic energy
 
-That is the statistic, and it works: on the synthetic testbed an empty room sits
-at z < 1.5 while someone walking through reaches z > 11, against a threshold of
-6. The absolute scale is meaningless (it depends on the room, the geometry, the
-transmit power), which is why calibration measures it per link and thresholds
-are expressed in standard deviations.
+That is the statistic, and it works. Measured across six random static
+environments, an empty room peaks at z=4.5 while someone walking through reaches
+a median of z=69, against a threshold of 6. The absolute scale is meaningless
+(it depends on the room, the geometry, the transmit power), which is why
+calibration measures it per link and thresholds are expressed in standard
+deviations. See docs/measurements.md.
 
 A coherence term is also computed and available::
 
@@ -23,10 +24,11 @@ direction each sample while a body, being a physical object in a fixed place,
 perturbs the same subcarriers the same way for as long as it is there.
 
 **Measured, it does not help.** On the synthetic source it costs margin
-(walk_through reaches z=8.2 with the gate versus z=11.4 without) and is
-identical on the other scenarios, because ``R_t`` sits near 0.9 on quiet data
-rather than near zero -- it is tracking the slow convergence of the long EWMA,
-not distinguishing noise from bodies. So it is **off by default**.
+(walk_through reaches z=8.2 with the gate versus z=11.4 without, measured before
+the bias-correction fix below) and is identical on the other scenarios, because
+``R_t`` sits near 0.9 on quiet data rather than near zero -- it is tracking the
+convergence of the long EWMA, not distinguishing noise from bodies. So it is
+**off by default**.
 
 It is kept, and kept configurable, because the case it is meant to address
 cannot be reproduced here: synthetic noise is Gaussian and stationary, whereas

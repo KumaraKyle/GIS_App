@@ -1,85 +1,212 @@
 # csisense configuration.
 #
-# Copy to config/config.yaml and edit. Every value here can also be set from the
+# Copy to config/config.yaml and edit. Every value can also be set from the
 # environment with a CSISENSE__ prefix and __ between levels, which takes
 # priority over this file:
 #
 #     CSISENSE__PRESENCE__K_ON=5.5
 #     CSISENSE__MQTT__PASSWORD=hunter2
+#
+# Unknown keys are rejected rather than ignored, so a typo fails at startup
+# instead of silently doing nothing.
 
 deployment:
-  id: home
+  id: home            # used in MQTT topics and Home Assistant entity ids
   name: CSI Sense
+
+# ---------------------------------------------------------------------------
+# Where CSI comes from
+# ---------------------------------------------------------------------------
 
 source:
   # synthetic - physics model, no hardware. Start here.
   # nexmon    - Raspberry Pi via nexmon_csi (the 256-subcarrier primary sensor)
-  # udp       - ESP32 satellites
-  # replay    - a recorded session
+  # udp       - ESP32 satellites sending the batched binary format
+  # replay    - a recorded Parquet session
+  # serial    - esp-csi CSV over USB; bring-up only, not for recording
   kind: synthetic
 
   nexmon:
-    port: 5500
-    # 80MHz is the whole reason the Pi is the primary sensor; 20/40 are for
-    # debugging only.
+    bind: "0.0.0.0"
+    port: 5500        # nexmon_csi broadcasts here; not configurable in firmware
+    # 80MHz is the whole reason the Pi is the primary sensor (256 subcarriers).
+    # 20/40 are for debugging or for sensing against the ESP32s on 2.4GHz.
     bandwidth_mhz: 80
-    # Sense against one transmitter. Leave empty during bring-up to accept any,
-    # then pin it once you know which link gives the best coverage.
+    # Sense against one transmitter. Leave empty during bring-up when you do
+    # not know the MAC yet, then pin it once you know which link works best.
     tx_mac: ""
+    # RF cores to accept. Different antennas see different multipath, so each
+    # core is a separate link rather than an interchangeable sample.
     cores: [0]
+    # Reject frames whose decoded chanspec disagrees. 0 disables the check.
+    # Worth setting: if nexutil was configured for a different channel than the
+    # software believes, everything still flows and every number is wrong.
+    channel: 0
 
-  udp:
+  udp:                # ESP32 receivers
     bind: "0.0.0.0"
     port: 5566
 
+  serial:             # bring-up only
+    port: /dev/ttyUSB0
+    baud: 921600
+
+  replay:
+    path: data/recordings
+    speed: 1.0        # 1.0 real time, 0.0 as fast as possible, 2.0 double
+    loop: false
+
   synthetic:
     seed: 42
-    scenario: walk_through
+    scenario: walk_through   # see: csisense scenarios
     n_links: 2
     n_sub: 64
     rate_hz: 100.0
+    snr_db: 25.0
+    loss_pct: 0.0
+    duration_s: null         # null uses the scenario's own duration
+    # 2.437e9 simulates the ESP32 links, 5.785e9 the Pi's. At 5GHz the same
+    # motion produces twice the phase rotation, so thresholds do not transfer.
+    carrier_hz: 2.437e9
+
+# ---------------------------------------------------------------------------
+# Room geometry -- only needed for RTI (the spatial panel)
+# ---------------------------------------------------------------------------
+#
+# Positions are metres in a room-local frame; the origin can be anywhere as
+# long as it stays put. Nothing detects a node that was moved: the image just
+# smears, and it smears in a way that looks like a plausible detection rather
+# than like an error. Measure them properly.
+#
+# Link count grows as N(N-1)/2, so 4 nodes = 6 links, 6 nodes = 15, 8 = 28.
+
+geometry:
+  room_size_m: [5.0, 4.0]
+  voxel_m: 0.25
+  nodes: []
+  #  - {id: pi,   position: [0.3, 2.0]}
+  #  - {id: esp1, position: [4.7, 2.0]}
+  links: []
+  #  - {link_id: "nexmon:0:c0s0", tx: pi, rx: esp1, enabled: true}
+
+rti:
+  enabled: true
+  # Below this the inversion is dominated by the smoothness prior rather than
+  # by measurements, so any image would be mostly fabricated. The engine draws
+  # each link's sensitivity ellipse instead, which is truthful. Adding nodes
+  # lifts the gate with no code change.
+  min_links: 4
+  sigma_e_m: 0.25     # width of a link's elliptical sensitivity region
+  delta_c_m: 0.5      # spatial correlation distance of the smoothness prior
+  sigma_x: 0.03
+  alpha: 0.1          # Tikhonov regularisation weight
+  min_coverage: 3     # voxels lit by fewer links than this are masked
+  publish_hz: 5.0
+
+# ---------------------------------------------------------------------------
+# Signal processing
+# ---------------------------------------------------------------------------
 
 dsp:
   subcarriers:
-    mode: auto
+    mode: auto        # auto (variance-ranked) | all | explicit
+    # Everything downstream is sized by this, and it is the dominant cost in
+    # the chain: PCA covariance is O(n_keep^2) per frame. Running at the full
+    # 234-bin valid set instead of 32 is ~53x the work.
     n_keep: 32
     exclude_pilots: true
-  hampel_window: 11
+    explicit: []      # used only when mode is "explicit"
+    # Frames of observation before the ranked subset is chosen and frozen. The
+    # chain emits nothing until then, because the feature width changes at that
+    # moment and anything fitted before it would be fitted at the wrong width.
+    warmup_frames: 1000
+
+  hampel_window: 11   # must be odd
   hampel_n_sigma: 3.0
-  # Torso motion.
+
+  # Torso motion. Deliberately excludes breathing (0.2-0.35Hz).
   bandpass_slow: { low: 0.3, high: 3.0, order: 4 }
   # Hand motion.
   bandpass_fast: { low: 2.0, high: 20.0, order: 4 }
+
   pca_components: 6
   # Component 0 is the static environment. Dropping it removes "the room" and
   # keeps "the motion" - the cheapest defence against a model learning your
   # furniture instead of your gestures.
   pca_drop_first: true
+  tau_pca_s: 60.0
+  pca_refit_every: 500
+
+  # Signed Doppler, via the CSI ratio. 64-point FFT at 100Hz gives 1.5625Hz
+  # bins, so |f| <= 20Hz keeps 25 bins.
+  doppler_nperseg: 64
+  doppler_noverlap: 48
+  doppler_max_hz: 20.0
+
   gain_compensation: true
 
+# ---------------------------------------------------------------------------
+# Presence detection
+# ---------------------------------------------------------------------------
+
 presence:
-  tau_long_s: 30.0
-  tau_short_s: 0.4
+  tau_long_s: 30.0    # the "static room" reference
+  tau_short_s: 0.4    # "now"
+
   # Detection threshold in standard deviations above the calibrated quiet
   # baseline. Raise it if you get false triggers, lower it if you have to walk
-  # in twice. Also exposed to Home Assistant as a slider.
+  # in twice. Exposed to Home Assistant as a slider.
+  #
+  # Measured on the synthetic testbed: quiet rooms peak at z=4.5 across six
+  # geometries, someone walking through reaches a median of z=69.
   k_on: 6.0
   # Release threshold. Must stay below k_on or the state machine chatters.
   k_off: 3.0
   min_frames_on: 3
+
+  # How long the statistic must stay below k_off before MOTION relaxes into
+  # OCCUPIED_STILL, so a pause mid-stride does not toggle the state.
+  still_debounce_s: 2.0
   # How long someone counts as present after they stop moving. This is what
-  # stops the lights going off while you sit reading.
+  # stops the lights going off while you sit reading. It has to be a timeout
+  # rather than a measurement: a motionless body is physically indistinguishable
+  # from a wall, because the only thing CSI measures is change.
   occupancy_timeout_s: 120.0
+  # If every link goes unhealthy for this long, drop to IDLE and report
+  # unavailable. Without it a dead sensor leaves Home Assistant holding
+  # occupancy forever and nothing looks broken.
+  link_loss_timeout_s: 10.0
+  # A link losing more than this over the trailing minute is excluded from
+  # fusion entirely rather than dragging the statistic around.
+  max_link_loss_pct: 20.0
+
+  # Room must be empty. Calibration additionally waits for the long-term
+  # reference to settle before it collects anything.
   calibration_s: 120.0
+  # Without this, someone who sits still is absorbed into the reference within
+  # tau_long_s and vanishes. Effectively never turn it off.
   freeze_baseline_when_active: true
+
+  deviation_lag_frames: 20
+  # Multiply the statistic by the coherence of the deviation direction. OFF by
+  # default: measured, it costs detection margin rather than gaining noise
+  # rejection, because coherence sits near 0.9 on quiet data. The interference
+  # it targets (non-stationary drift from neighbouring APs) cannot be
+  # reproduced synthetically, so evaluate it on a real idle recording first.
+  coherence_gate: false
+
+# ---------------------------------------------------------------------------
+# Gestures (not yet implemented -- see the roadmap)
+# ---------------------------------------------------------------------------
 
 gestures:
   coarse:
     enabled: false
     model: data/models/current_coarse
-    window: 256
+    window: 256       # samples, 2.56s at 100Hz
     hop: 25
     min_confidence: 0.75
+    max_energy: -4.0  # out-of-distribution rejection threshold
     refractory_s: 2.0
   fine:
     # Marginal by nature - close range only, and needs retraining per room.
@@ -89,14 +216,19 @@ gestures:
     window: 128
     hop: 12
     min_confidence: 0.85
+    max_energy: -5.0
     refractory_s: 1.0
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
 
 mqtt:
   enabled: false
   host: 192.168.1.10
   port: 1883
   username: ""
-  password: ""
+  password: ""        # prefer CSISENSE__MQTT__PASSWORD
   base_topic: csisense
   discovery_prefix: homeassistant
   publish_motion_stat_hz: 2.0
@@ -110,6 +242,14 @@ web:
 recorder:
   dir: data/recordings
   compression: zstd
+  # Sessions, not streams. 100Hz x 256 subcarriers is ~35 kB/s compressed,
+  # about 3GB per link per day, and a Pi's SD card will not survive that.
+  max_session_s: 900.0
+  max_session_bytes: 536870912      # 512 MiB
+  min_free_bytes: 2147483648        # refuse to start below 2 GiB free
+  row_group_frames: 6000            # 60s at 100Hz
+  row_group_bytes: 33554432
 
 logging:
   level: INFO
+  file: null
