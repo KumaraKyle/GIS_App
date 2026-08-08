@@ -175,6 +175,16 @@ SCENARIOS: dict[str, Scenario] = {
         agc_glitch_at_s=(5.0, 12.0),
         motion_intervals=((6.0, 14.0),),
     ),
+    # An empty room whose receiver gain jumps. This is the most convincing false
+    # positive available -- a large, abrupt, room-wide amplitude change with
+    # nobody there -- so it gets a scenario of its own rather than being
+    # simulated by poking at a source's internals.
+    "agc_glitch_empty": Scenario(
+        "agc_glitch_empty",
+        _static_only,
+        duration_s=20.0,
+        agc_glitch_at_s=(5.0, 12.0),
+    ),
     "sensor_dropout": Scenario(
         "sensor_dropout",
         _crossing,

@@ -174,9 +174,15 @@ class RtiConfig(BaseModel):
 
 class SubcarrierConfig(BaseModel):
     mode: Literal["auto", "all", "explicit"] = "auto"
+    # Everything downstream is sized by this. It is the dominant cost in the
+    # chain: PCA covariance is O(n_keep^2) per frame, so running at the full
+    # 234-bin valid set instead of 32 is ~53x the work.
     n_keep: int = 32
     exclude_pilots: bool = True
     explicit: list[int] = Field(default_factory=list)
+    # Frames of observation before the ranked subset is chosen and frozen. The
+    # chain emits nothing until then, since the feature width changes at freeze.
+    warmup_frames: int = 1000
 
 
 class BandpassConfig(BaseModel):
@@ -244,9 +250,15 @@ class PresenceConfig(BaseModel):
     # dead sensor leaves Home Assistant holding occupancy forever and the lights
     # never turn off.
     link_loss_timeout_s: float = 10.0
-    # Lag used for the deviation-direction coherence check. Noise decorrelates
-    # over this interval; a person does not.
+    # Lag used for the deviation-direction coherence check.
     deviation_lag_frames: int = 20
+    # Multiply the statistic by the deviation coherence. Off by default: on the
+    # synthetic testbed it costs detection margin rather than gaining noise
+    # rejection, because coherence sits near 0.9 on quiet data. The interference
+    # it is meant to reject (non-stationary drift from neighbouring APs) cannot
+    # be reproduced synthetically, so evaluate it on a real idle recording
+    # before turning it on.
+    coherence_gate: bool = False
     # A link contributing above this trailing-window loss is excluded from
     # fusion entirely rather than dragging the statistic around.
     max_link_loss_pct: float = 20.0

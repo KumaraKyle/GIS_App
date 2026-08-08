@@ -19,10 +19,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from csisense.config import AppConfig
+from csisense.dsp.chain import DspChain
 from csisense.events.types import Event
 from csisense.ingest.quality import LinkQualityMonitor
-from csisense.sources.base import CsiSource
-from csisense.wire import CsiFrame
+from csisense.presence.baseline import LinkBaseline
+from csisense.presence.detector import PresenceDetector
+from csisense.sources.base import CsiSource, SourceInfo
+from csisense.wire import CsiFrame, SourceKind
 
 log = logging.getLogger(__name__)
 
@@ -61,20 +64,50 @@ class Pipeline:
         config: AppConfig,
         *,
         sinks: Sequence[EventSink] = (),
+        source_info: SourceInfo | None = None,
+        baselines: dict[str, LinkBaseline] | None = None,
+        enable_presence: bool = True,
     ) -> None:
         self.config = config
         self._sinks = list(sinks)
         self._quality = LinkQualityMonitor()
         self.stats = PipelineStats()
+        self._source_info = source_info
+        self._nominal_rate_hz = source_info.rate_hz if source_info else 100.0
+
+        # One DSP chain per link: filter state, PCA basis and subcarrier
+        # ranking are all link-specific, because two antennas in the same room
+        # see genuinely different multipath.
+        self._chains: dict[str, DspChain] = {}
+        self.presence: PresenceDetector | None = (
+            PresenceDetector(config.presence, fs=self._nominal_rate_hz, baselines=baselines)
+            if enable_presence
+            else None
+        )
 
     def add_sink(self, sink: EventSink) -> None:
         self._sinks.append(sink)
+
+    def _chain_for(self, frame: CsiFrame) -> DspChain:
+        link_id = frame.link_id()
+        chain = self._chains.get(link_id)
+        if chain is None:
+            chain = DspChain(
+                self.config.dsp,
+                source_kind=frame.source_kind,
+                n_sub=frame.n_sub,
+                rate_hz=self._nominal_rate_hz,
+                sig_mode=frame.sig_mode,
+            )
+            self._chains[link_id] = chain
+        return chain
 
     def step(self, frame: CsiFrame) -> list[Event]:
         """Process one frame and return the events it produced.
 
         Pure with respect to I/O: the only thing it touches is pipeline state.
-        Keep it that way when adding stages.
+        Keep it that way when adding stages -- this purity is what makes the
+        golden replay tests possible.
         """
         self.stats.frames += 1
         if not self.stats.first_ts_ns:
@@ -89,11 +122,31 @@ class Pipeline:
         if quality is not None:
             events.append(quality)
 
-        # Later milestones insert DSP -> presence -> gesture stages here. Each
-        # appends to `events`; nothing above this line needs to change.
+        features = self._chain_for(frame).process(frame)
+        if features is not None and self.presence is not None:
+            self.presence.set_link_health(
+                link_id,
+                self._quality.is_healthy(
+                    link_id,
+                    frame.ts_host_ns,
+                    nominal_rate_hz=self._nominal_rate_hz,
+                    max_loss_pct=self.config.presence.max_link_loss_pct,
+                ),
+            )
+            presence_event = self.presence.update(features)
+            if presence_event is not None:
+                events.append(presence_event)
 
         self.stats.events += len(events)
         return events
+
+    def start_calibration(self, duration_s: float | None = None) -> None:
+        if self.presence is not None:
+            self.presence.start_calibration(duration_s)
+
+    @property
+    def source_kind(self) -> SourceKind | None:
+        return self._source_info.kind if self._source_info else None
 
     def _emit(self, events: Sequence[Event]) -> None:
         for event in events:
@@ -109,6 +162,11 @@ class Pipeline:
     async def run(self, source: CsiSource) -> PipelineStats:
         """Pump a source to exhaustion, emitting events to the sinks."""
         info = source.info()
+        if self._source_info is None:
+            self._source_info = info
+            self._nominal_rate_hz = info.rate_hz
+            if self.presence is not None:
+                self.presence.fs = info.rate_hz
         log.info(
             "pipeline start: source=%s n_sub=%d rate=%.1fHz links=%d",
             info.kind.value,

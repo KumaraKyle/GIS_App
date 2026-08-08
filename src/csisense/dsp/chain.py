@@ -137,14 +137,30 @@ class DspChain:
 
         bp = config.bandpass_slow if band == "slow" else config.bandpass_fast
         self.bandpass = CausalButter(bp.low, bp.high, fs=rate_hz, order=bp.order)
+        # Sized for the frozen selection, not the full valid set. PCA cost is
+        # quadratic in channel count, so this is the difference between ~7% and
+        # ~1% of a core per link.
         self.pca = StreamingPCA(
             config.pca_components,
-            n_channels=len(self.selector.indices),
+            n_channels=self._target_channels(),
             fs=rate_hz,
             tau_s=config.tau_pca_s,
             refit_every=config.pca_refit_every,
             drop_first=config.pca_drop_first,
         )
+
+        self._seen = 0
+
+    def _target_channels(self) -> int:
+        """Channel count after the selector freezes."""
+        if self.selector.frozen:
+            return len(self.selector.indices)
+        return min(self.config.subcarriers.n_keep, len(self.selector.valid_indices))
+
+    @property
+    def ready(self) -> bool:
+        """Whether the selector has committed to a subset and features can flow."""
+        return self.selector.frozen
 
     @property
     def stages(self) -> list[DspStage]:
@@ -192,14 +208,29 @@ class DspChain:
             self.rssi_gain.set_rssi(frame.rssi)
             estimated = True
 
-        normalised: np.ndarray = amp
-        for stage in (self.gain, self.rssi_gain, self.selector, self.hampel, self.normaliser):
-            out = stage.push(normalised)
-            # Hampel withholds output until its centred window fills; nothing
-            # downstream can run until it does.
-            if out is None:
-                return None
-            normalised = out
+        x: np.ndarray = self.gain.push(amp)
+        x = self.rssi_gain.push(x)
+        x = self.selector.push(x)
+
+        # The selector spends its first `warmup_frames` ranking subcarriers, and
+        # emits the full valid set meanwhile. Nothing downstream may run until
+        # it commits, because the feature width changes at that moment and a
+        # baseline or PCA basis fitted at the wrong width is meaningless.
+        self._seen += 1
+        if not self.selector.frozen:
+            if self._seen >= self.config.subcarriers.warmup_frames:
+                self.selector.freeze()
+                # Filter and window state were sized for the wide vector; drop
+                # them so they re-initialise at the committed width.
+                self.bandpass.resize()
+                self.hampel.reset()
+            return None
+
+        out = self.hampel.push(x)
+        # Hampel withholds output until its centred window fills.
+        if out is None:
+            return None
+        normalised = self.normaliser.push(out)
 
         filtered = self.bandpass.push(normalised)
         components = self.pca.push(filtered)

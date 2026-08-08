@@ -61,6 +61,16 @@ class CausalButter(DspStage):
         if self._zi is not None:
             self._zi[:] = 0.0
 
+    def resize(self, n_channels: int | None = None) -> None:
+        """Discard filter state so it re-initialises at a new channel count.
+
+        Needed when the subcarrier selector commits to its ranked subset and the
+        feature vector narrows underneath the filter.
+        """
+        self._zi = None
+        if n_channels is not None:
+            self._init_state(n_channels)
+
     def push(self, x: np.ndarray) -> np.ndarray:
         v = np.asarray(x, dtype=np.float64)
         if self._zi is None:

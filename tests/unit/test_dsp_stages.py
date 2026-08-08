@@ -301,13 +301,32 @@ def make_frame(n_sub=64, seed=0, gain_locked=True):
 
 
 def test_chain_produces_features_after_warmup():
-    chain = DspChain(DspConfig(), source_kind=SourceKind.ESP, n_sub=64)
-    out = [chain.process(make_frame(seed=i)) for i in range(400)]
+    """Nothing flows until the selector commits to its ranked subset: the
+    feature width changes at that moment, so anything fitted before it would be
+    fitted at the wrong width."""
+    config = DspConfig()
+    config.subcarriers.warmup_frames = 200
+    chain = DspChain(config, source_kind=SourceKind.ESP, n_sub=64)
+
+    out = [chain.process(make_frame(seed=i)) for i in range(500)]
     produced = [f for f in out if f is not None]
 
     assert produced, "chain never produced a feature"
     assert produced[-1].amplitude.ndim == 1
     assert produced[-1].link_id == "esp:0"
+    # Everything downstream is sized by n_keep, not by the radio's width. This
+    # is what makes the chain cost independent of subcarrier count.
+    assert produced[-1].amplitude.shape == (config.subcarriers.n_keep,)
+
+
+def test_chain_withholds_features_until_the_selector_freezes():
+    config = DspConfig()
+    config.subcarriers.warmup_frames = 300
+    chain = DspChain(config, source_kind=SourceKind.ESP, n_sub=64)
+
+    early = [chain.process(make_frame(seed=i)) for i in range(250)]
+    assert all(f is None for f in early)
+    assert not chain.ready
 
 
 def test_chain_fingerprint_changes_with_config():
@@ -349,8 +368,10 @@ def test_chain_state_refuses_a_mismatched_fingerprint():
 def test_chain_marks_gain_estimated_when_unlocked():
     """Whether gain was locked propagates all the way to the dataset builder,
     which excludes unlocked stretches from amplitude-feature training."""
-    chain = DspChain(DspConfig(), source_kind=SourceKind.ESP, n_sub=64)
-    feats = [chain.process(make_frame(seed=i, gain_locked=False)) for i in range(200)]
+    config = DspConfig()
+    config.subcarriers.warmup_frames = 200
+    chain = DspChain(config, source_kind=SourceKind.ESP, n_sub=64)
+    feats = [chain.process(make_frame(seed=i, gain_locked=False)) for i in range(500)]
     produced = [f for f in feats if f is not None]
     assert produced and all(f.gain_estimated for f in produced)
 
