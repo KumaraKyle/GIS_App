@@ -1,0 +1,115 @@
+# csisense configuration.
+#
+# Copy to config/config.yaml and edit. Every value here can also be set from the
+# environment with a CSISENSE__ prefix and __ between levels, which takes
+# priority over this file:
+#
+#     CSISENSE__PRESENCE__K_ON=5.5
+#     CSISENSE__MQTT__PASSWORD=hunter2
+
+deployment:
+  id: home
+  name: CSI Sense
+
+source:
+  # synthetic - physics model, no hardware. Start here.
+  # nexmon    - Raspberry Pi via nexmon_csi (the 256-subcarrier primary sensor)
+  # udp       - ESP32 satellites
+  # replay    - a recorded session
+  kind: synthetic
+
+  nexmon:
+    port: 5500
+    # 80MHz is the whole reason the Pi is the primary sensor; 20/40 are for
+    # debugging only.
+    bandwidth_mhz: 80
+    # Sense against one transmitter. Leave empty during bring-up to accept any,
+    # then pin it once you know which link gives the best coverage.
+    tx_mac: ""
+    cores: [0]
+
+  udp:
+    bind: "0.0.0.0"
+    port: 5566
+
+  synthetic:
+    seed: 42
+    scenario: walk_through
+    n_links: 2
+    n_sub: 64
+    rate_hz: 100.0
+
+dsp:
+  subcarriers:
+    mode: auto
+    n_keep: 32
+    exclude_pilots: true
+  hampel_window: 11
+  hampel_n_sigma: 3.0
+  # Torso motion.
+  bandpass_slow: { low: 0.3, high: 3.0, order: 4 }
+  # Hand motion.
+  bandpass_fast: { low: 2.0, high: 20.0, order: 4 }
+  pca_components: 6
+  # Component 0 is the static environment. Dropping it removes "the room" and
+  # keeps "the motion" - the cheapest defence against a model learning your
+  # furniture instead of your gestures.
+  pca_drop_first: true
+  gain_compensation: true
+
+presence:
+  tau_long_s: 30.0
+  tau_short_s: 0.4
+  # Detection threshold in standard deviations above the calibrated quiet
+  # baseline. Raise it if you get false triggers, lower it if you have to walk
+  # in twice. Also exposed to Home Assistant as a slider.
+  k_on: 6.0
+  # Release threshold. Must stay below k_on or the state machine chatters.
+  k_off: 3.0
+  min_frames_on: 3
+  # How long someone counts as present after they stop moving. This is what
+  # stops the lights going off while you sit reading.
+  occupancy_timeout_s: 120.0
+  calibration_s: 120.0
+  freeze_baseline_when_active: true
+
+gestures:
+  coarse:
+    enabled: false
+    model: data/models/current_coarse
+    window: 256
+    hop: 25
+    min_confidence: 0.75
+    refractory_s: 2.0
+  fine:
+    # Marginal by nature - close range only, and needs retraining per room.
+    # Turn on once you have measured it and decided the accuracy is worth it.
+    enabled: false
+    model: data/models/current_fine
+    window: 128
+    hop: 12
+    min_confidence: 0.85
+    refractory_s: 1.0
+
+mqtt:
+  enabled: false
+  host: 192.168.1.10
+  port: 1883
+  username: ""
+  password: ""
+  base_topic: csisense
+  discovery_prefix: homeassistant
+  publish_motion_stat_hz: 2.0
+
+web:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
+  live_stream_hz: 20.0
+
+recorder:
+  dir: data/recordings
+  compression: zstd
+
+logging:
+  level: INFO

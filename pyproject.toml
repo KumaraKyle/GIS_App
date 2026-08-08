@@ -1,0 +1,78 @@
+[project]
+name = "csisense"
+version = "0.1.0"
+description = "Wi-Fi CSI human sensing: through-wall presence and gesture detection for IoT automation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Core deps must stay installable on a Raspberry Pi 3B+ (aarch64, 1GB RAM).
+# Nothing here may pull in torch. See the [ml] extra for training-only deps.
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Pi / runtime: capture, inference, MQTT publishing.
+edge = [
+    "aiomqtt>=2.0",
+    "pyarrow>=16.0",
+    "onnxruntime>=1.18",
+]
+# PC only: training and evaluation. Never installed on the Pi.
+ml = [
+    "torch>=2.2",
+    "scikit-learn>=1.4",
+    "pyarrow>=16.0",
+]
+web = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6.100",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+csisense = "csisense.app.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/csisense"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "hardware: requires physical ESP32/Pi capture hardware (deselected by default)",
+]
+addopts = "-m 'not hardware'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "NPY"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# Modules where a type error means silently corrupted signal data.
+[[tool.mypy.overrides]]
+module = ["csisense.wire", "csisense.dsp.*", "csisense.presence.*"]
+disallow_untyped_defs = true
+strict_equality = true

@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Recordings, trained models and calibration are machine-local and often large.
+# Test fixtures under tests/fixtures/ are committed deliberately.
+data/
+
+# Built frontend, produced by `npm run build` in web/
+src/csisense/web/static/
+web/node_modules/
+
+config/config.yaml
+config/sensors.yaml
+
+.DS_Store
