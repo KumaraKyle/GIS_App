@@ -95,6 +95,7 @@ async def test_motion_is_detected_at_5ghz():
     assert zs.max() > 6.0
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("n_links", [1, 3])
 async def test_detection_rate_across_geometries(n_links):
     """Detection margin is strongly geometry-dependent, and more links help.

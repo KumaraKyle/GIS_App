@@ -18,6 +18,7 @@ from csisense.sources.synthetic import CARRIER_HZ_5G
 from csisense.wire import SourceKind
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("seed", range(6))
 async def test_empty_room_produces_no_presence_events(seed):
     baselines = await calibrate(seed=seed)

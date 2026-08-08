@@ -217,7 +217,11 @@ class SyntheticCsiSource(CsiSource):
         duration_s: float | None = None,
         loss_pct: float | None = None,
         realtime: bool = False,
-        scale: float = 40.0,
+        # Peak IQ magnitude. 100 keeps a comfortable margin inside int8 (+-127)
+        # while using most of the range, which is what a receiver with working
+        # AGC does. Setting it much lower wastes bits and makes quantisation
+        # noise, rather than thermal noise, the limit on sensitivity.
+        scale: float = 100.0,
         epoch_ns: int = DEFAULT_EPOCH_NS,
         carrier_hz: float = CARRIER_HZ_2G4,
         source_kind: SourceKind = SourceKind.SYNTHETIC,
@@ -326,11 +330,14 @@ class SyntheticCsiSource(CsiSource):
                     + 1j * self._rng.normal(0.0, sigma, self._n_sub)
                 ).astype(np.complex64)
 
-                # Scale into the int8-ish range a real radio would report, so
-                # quantisation behaviour resembles hardware.
-                csi = ((h + noise) * gain * self._scale / max(abs(h).max(), 1e-9)).astype(
-                    np.complex64
-                )
+                # Scale into the range a real radio reports and quantise to
+                # integers. Radios deliver integer IQ from an ADC (int8 on the
+                # ESP32, int16 via nexmon); emitting fractional values would
+                # make recordings lossy relative to live capture purely as an
+                # artefact of the simulator, and would overstate how much
+                # resolution the DSP actually has to work with.
+                scaled = (h + noise) * gain * self._scale / max(abs(h).max(), 1e-9)
+                csi = (np.rint(scaled.real) + 1j * np.rint(scaled.imag)).astype(np.complex64)
 
                 yield CsiFrame(
                     source_kind=self._source_kind,

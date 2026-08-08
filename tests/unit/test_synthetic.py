@@ -73,7 +73,13 @@ async def test_empty_scenario_is_static():
 
 
 async def test_motion_produces_more_variation_than_empty():
-    """The core claim of the whole project, in one assertion."""
+    """The core claim of the whole project, in one assertion.
+
+    The margin is bounded by quantisation rather than by thermal noise at this
+    SNR: CSI is emitted as integer IQ, as real radios do, so the empty-room
+    floor cannot fall below one LSB no matter how quiet the channel is. Raising
+    snr_db further does not widen this ratio.
+    """
     common = {"seed": 5, "n_links": 1, "snr_db": 40.0, "duration_s": 20.0}
     empty = await collect(SyntheticCsiSource(scenario="empty", **common))
     moving = await collect(SyntheticCsiSource(scenario="walk_through", **common))
@@ -83,7 +89,7 @@ async def test_motion_produces_more_variation_than_empty():
         amps = amps / (amps.mean(axis=1, keepdims=True) + 1e-9)
         return float(np.mean(np.std(amps, axis=0)))
 
-    assert variability(moving) > 5 * variability(empty)
+    assert variability(moving) > 4 * variability(empty)
 
 
 async def test_moving_reflector_rotates_phase():

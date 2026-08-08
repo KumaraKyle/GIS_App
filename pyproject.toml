@@ -56,7 +56,10 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "hardware: requires physical ESP32/Pi capture hardware (deselected by default)",
+    "slow: multi-minute acceptance sweep; runs by default, skip with -m 'not slow'",
 ]
+# Slow tests stay in by default: they are the acceptance suite, and the bugs
+# they catch (a dead detector, a lossy recorder) do not show up anywhere else.
 addopts = "-m 'not hardware'"
 
 [tool.ruff]
@@ -79,5 +82,5 @@ strict_equality = true
 
 # scipy ships no stubs and scipy-stubs is not worth pinning on a Pi install.
 [[tool.mypy.overrides]]
-module = ["scipy.*"]
+module = ["scipy.*", "pyarrow.*"]
 ignore_missing_imports = true
