@@ -51,6 +51,10 @@ class NexmonSourceConfig(BaseModel):
     tx_mac: str = ""
     # Only these RF cores are used. The Pi 3B+ has one usable core for CSI.
     cores: list[int] = Field(default_factory=lambda: [0])
+    # Reject frames whose decoded chanspec disagrees. 0 disables the check.
+    # Worth setting: if nexutil was configured for a different channel than the
+    # software believes, everything still flows and every number is wrong.
+    channel: int = 0
 
     @property
     def n_sub(self) -> int:
