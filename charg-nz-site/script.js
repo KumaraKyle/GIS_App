@@ -2,9 +2,10 @@
 const PRICING = { firstHour: 3, perExtraHour: 2, dailyCap: 10 };
 
 // Placeholder stations: replace with your real venues (or load from an API).
+// Each station holds 8 powerbanks, so available + slots should add up to 8.
 const STATIONS = [
   { name: "Ponsonby Central", suburb: "Ponsonby", type: "Café", hours: "7am – 10pm", available: 6, slots: 2 },
-  { name: "Britomart Transport Centre", suburb: "Auckland CBD", type: "Transport", hours: "24 hours", available: 9, slots: 3 },
+  { name: "Britomart Transport Centre", suburb: "Auckland CBD", type: "Transport", hours: "24 hours", available: 6, slots: 2 },
   { name: "University Student Hub", suburb: "Grafton", type: "Campus", hours: "7am – 11pm", available: 2, slots: 6 },
   { name: "Viaduct Harbour Bar", suburb: "Viaduct", type: "Bar", hours: "11am – 2am", available: 4, slots: 4 },
   { name: "K Road Coffee Co.", suburb: "Karangahape Rd", type: "Café", hours: "6:30am – 4pm", available: 0, slots: 8 },

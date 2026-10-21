@@ -250,3 +250,19 @@ details p { color: var(--muted); padding-bottom: 1rem; margin: 0; }
   .glow-ring { animation: none; }
   * { transition: none !important; }
 }
+
+/* Station showcase */
+.showcase { display: grid; grid-template-columns: .8fr 1.2fr; gap: 64px; align-items: center; }
+.showcase__img { margin: 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); box-shadow: 0 0 60px rgba(255, 26, 45, .15); }
+.showcase__img img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; object-position: center 35%; }
+.features { list-style: none; padding: 0; margin: 2rem 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.features li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; display: grid; gap: .2rem; }
+.features strong { font-family: var(--display); font-style: italic; font-size: 1.7rem; color: var(--red); line-height: 1; }
+.features span { color: var(--muted); font-size: .9rem; }
+@media (max-width: 900px) {
+  .showcase { grid-template-columns: 1fr; gap: 36px; }
+  .showcase__img { max-width: 420px; }
+}
+@media (max-width: 480px) {
+  .features { grid-template-columns: 1fr; }
+}
