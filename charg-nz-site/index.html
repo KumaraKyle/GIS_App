@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Charg-nz — Power When You Need It</title>
+  <meta name="description" content="Charg-nz powerbank rental. Grab a charged powerbank from a station, charge on the go, and drop it back at any station in the city.">
+  <meta name="theme-color" content="#0b0b0d">
+  <link rel="icon" href="assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Saira:ital,wght@1,800;1,900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="nav" id="top">
+  <div class="wrap nav__inner">
+    <a href="#top" class="brand" aria-label="Charg-nz home">
+      <img src="assets/logo.png" alt="" width="40" height="40">
+      <span class="wordmark">Charg-<em>nz</em></span>
+    </a>
+    <button class="nav__toggle" aria-expanded="false" aria-controls="nav-links" aria-label="Open menu">
+      <span></span><span></span><span></span>
+    </button>
+    <nav id="nav-links" class="nav__links">
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#stations">Stations</a>
+      <a href="#partners">For venues</a>
+      <a href="#faq">FAQ</a>
+      <a href="#stations" class="btn btn--sm">Find a station</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap hero__grid">
+      <div class="hero__copy">
+        <p class="eyebrow">Powerbank rental · Aotearoa</p>
+        <h1>Power when<br>you <span class="red">need it.</span></h1>
+        <p class="lead">Phone on 5%? Grab a fully charged Charg-nz powerbank from a station near you, keep moving, and drop it back at any station when you're done.</p>
+        <div class="hero__ctas">
+          <a href="#stations" class="btn">Find a station</a>
+          <a href="#how" class="btn btn--ghost">How it works</a>
+        </div>
+        <ul class="hero__stats">
+          <li><strong>3</strong><span>built-in cables<br>USB-C · Lightning · Micro</span></li>
+          <li><strong>24/7</strong><span>stations in<br>open venues</span></li>
+          <li><strong>Any</strong><span>station<br>for returns</span></li>
+        </ul>
+      </div>
+      <div class="hero__art">
+        <div class="glow-ring">
+          <img src="assets/logo.png" alt="Charg-nz logo: Rent, Charge, Go Further. Same city. More power." width="600" height="600">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="section" id="how">
+    <div class="wrap">
+      <p class="eyebrow">How it works</p>
+      <h2>Three steps. Zero flat batteries.</h2>
+      <div class="steps">
+        <article class="step">
+          <div class="step__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M10 1.5h4M9.5 8h5M9.5 11.5h5M9.5 15h5"/></svg>
+          </div>
+          <span class="step__num">01</span>
+          <h3>Rent</h3>
+          <p>Scan the QR code on any Charg-nz station with your phone camera. Pay with Apple Pay, Google Pay or card — no app download needed.</p>
+        </article>
+        <article class="step">
+          <div class="step__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+          </div>
+          <span class="step__num">02</span>
+          <h3>Charge</h3>
+          <p>A powerbank pops out, fully charged with built-in cables for every phone. Charge in your pocket while you eat, shop, study or travel.</p>
+        </article>
+        <article class="step">
+          <div class="step__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="3"/><circle cx="5" cy="9" r="2.2"/><circle cx="19" cy="9" r="2.2"/><path d="M6 20c0-3.3 2.7-6 6-6s6 2.7 6 6M1.5 18c0-2.2 1.6-4 3.5-4M22.5 18c0-2.2-1.6-4-3.5-4"/></svg>
+          </div>
+          <span class="step__num">03</span>
+          <h3>Go further</h3>
+          <p>Return it to any Charg-nz station across the city — not just the one you took it from. Rental stops the moment it clicks in.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section class="section section--alt" id="pricing">
+    <div class="wrap">
+      <p class="eyebrow">Pricing</p>
+      <h2>Simple, fair pricing.</h2>
+      <p class="sub">All prices in NZD, GST inclusive.</p>
+
+      <div class="plans">
+        <article class="plan">
+          <h3>Pay as you go</h3>
+          <p class="price"><span data-price="first">$3</span><small> first hour</small></p>
+          <ul>
+            <li>Then <span data-price="hourly">$2</span> per extra hour</li>
+            <li>Daily cap of <span data-price="daily">$10</span></li>
+            <li>No sign-up, just scan</li>
+          </ul>
+          <a href="#stations" class="btn btn--ghost btn--block">Find a station</a>
+        </article>
+        <article class="plan plan--featured">
+          <span class="badge">Most popular</span>
+          <h3>Day Pass</h3>
+          <p class="price"><span>$8</span><small> / 24 hours</small></p>
+          <ul>
+            <li>Unlimited swaps for 24 hours</li>
+            <li>Swap a low unit for a full one</li>
+            <li>Perfect for festivals &amp; big days out</li>
+          </ul>
+          <a href="#stations" class="btn btn--block">Get a Day Pass</a>
+        </article>
+        <article class="plan">
+          <h3>Monthly</h3>
+          <p class="price"><span>$15</span><small> / month</small></p>
+          <ul>
+            <li>Up to 2 hours free per rental</li>
+            <li>Unlimited rentals</li>
+            <li>Cancel anytime</li>
+          </ul>
+          <a href="#contact" class="btn btn--ghost btn--block">Join the waitlist</a>
+        </article>
+      </div>
+
+      <div class="calc" aria-labelledby="calc-title">
+        <div>
+          <h3 id="calc-title">What will my rental cost?</h3>
+          <p class="muted">Pay-as-you-go estimate. Drag to set how long you'll keep it.</p>
+        </div>
+        <div class="calc__control">
+          <label for="hours"><span id="hours-out">2 hours</span></label>
+          <input type="range" id="hours" min="1" max="24" value="2">
+        </div>
+        <p class="calc__total"><span id="cost-out">$5</span><small>estimated</small></p>
+      </div>
+      <p class="fine">Not returned within 72 hours? The powerbank is yours and a one-off $45 purchase fee applies.</p>
+    </div>
+  </section>
+
+  <!-- STATIONS -->
+  <section class="section" id="stations">
+    <div class="wrap">
+      <p class="eyebrow">Stations</p>
+      <h2>Find power near you.</h2>
+      <div class="finder">
+        <label class="search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input type="search" id="station-search" placeholder="Search by venue or suburb" autocomplete="off">
+        </label>
+        <div class="chips" role="group" aria-label="Filter by venue type">
+          <button class="chip is-active" data-filter="all">All</button>
+          <button class="chip" data-filter="Café">Cafés</button>
+          <button class="chip" data-filter="Bar">Bars</button>
+          <button class="chip" data-filter="Campus">Campus</button>
+          <button class="chip" data-filter="Transport">Transport</button>
+        </div>
+      </div>
+      <ul class="stations" id="station-list" aria-live="polite"></ul>
+      <p class="empty" id="station-empty" hidden>No stations match that search yet. <a href="#contact">Tell us where you want one.</a></p>
+    </div>
+  </section>
+
+  <!-- PARTNERS -->
+  <section class="section section--alt" id="partners">
+    <div class="wrap partner">
+      <div>
+        <p class="eyebrow">For venues</p>
+        <h2>Host a station.<br><span class="red">Keep customers longer.</span></h2>
+        <p class="lead">People stay where their phone stays alive. A Charg-nz station costs your venue nothing, brings in foot traffic and earns you a share of every rental.</p>
+        <ul class="ticks">
+          <li>Free installation and maintenance</li>
+          <li>Revenue share on every rental from your station</li>
+          <li>Listed on our station finder</li>
+          <li>Compact countertop and wall-mounted options</li>
+        </ul>
+      </div>
+      <form class="card form" id="contact" novalidate>
+        <h3>Get in touch</h3>
+        <label>Name<input name="name" required autocomplete="name"></label>
+        <label>Email<input name="email" type="email" required autocomplete="email"></label>
+        <label>I'm interested in
+          <select name="topic">
+            <option>Hosting a station at my venue</option>
+            <option>Monthly plan waitlist</option>
+            <option>Events &amp; festivals</option>
+            <option>Something else</option>
+          </select>
+        </label>
+        <label>Venue / message<textarea name="message" rows="3"></textarea></label>
+        <button class="btn btn--block" type="submit">Send</button>
+        <p class="form__status" role="status"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="section" id="faq">
+    <div class="wrap narrow">
+      <p class="eyebrow">FAQ</p>
+      <h2>Good questions.</h2>
+      <details>
+        <summary>Will it work with my phone?</summary>
+        <p>Yes. Every powerbank has built-in USB-C, Lightning and Micro-USB cables, so it charges iPhone, Android, earbuds and most handheld devices.</p>
+      </details>
+      <details>
+        <summary>Do I need to download an app?</summary>
+        <p>No. Scan the QR code on the station with your camera and pay in your browser with Apple Pay, Google Pay or a card.</p>
+      </details>
+      <details>
+        <summary>Can I return it somewhere else?</summary>
+        <p>Absolutely — that's the point. Drop it into any Charg-nz station with a free slot. You'll get a receipt as soon as it's returned.</p>
+      </details>
+      <details>
+        <summary>What if the station is full when I return?</summary>
+        <p>The station finder shows free slots in real time. If you arrive and it's full, contact us from the receipt link and we'll pause your rental while you find the next one.</p>
+      </details>
+      <details>
+        <summary>What if I lose it?</summary>
+        <p>If a powerbank isn't returned within 72 hours, it's yours to keep and a one-off purchase fee is charged. No further rental fees apply.</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer__inner">
+    <div class="brand">
+      <img src="assets/logo.png" alt="" width="40" height="40">
+      <div>
+        <span class="wordmark">Charg-<em>nz</em></span>
+        <p class="muted">Same city. More power.</p>
+      </div>
+    </div>
+    <nav class="footer__links" aria-label="Footer">
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#partners">For venues</a>
+      <a href="https://www.instagram.com/" rel="noopener">Instagram</a>
+    </nav>
+    <p class="muted small">© <span id="year"></span> Charg-nz™. Made in Aotearoa New Zealand.</p>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
